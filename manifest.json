@@ -1,0 +1,10 @@
+{
+  "id": "obsidian-plotgrid",
+  "name": "PlotGrid",
+  "version": "1.0.1",
+  "minAppVersion": "1.0.1",
+  "description": "Drag-and-drop plot grid for novel planning. Reads blueprint_root from a note's frontmatter.",
+  "author": "Adam",
+  "authorUrl": "",
+  "isDesktopOnly": false
+}

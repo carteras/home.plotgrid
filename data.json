@@ -1,0 +1,16 @@
+{
+  "books": [
+    {
+      "title": "Wetwear ",
+      "root": "blueprints/cyberpunk/arcology.1.a"
+    },
+    {
+      "title": "Gilt and Chrome",
+      "root": "blueprints/cyberpunk/arcology.1.b"
+    },
+    {
+      "title": "Ghost Protocols",
+      "root": "blueprints/cyberpunk/arcology.1.c"
+    }
+  ]
+}
