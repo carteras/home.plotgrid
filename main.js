@@ -235,6 +235,15 @@ class PlotGridView extends obsidian.ItemView {
         }
 
         // ── Phantom row ───────────────────────────────────────────────────────
+        const lastPair = pairs[pairs.length - 1];
+        if (lastPair) {
+            this.renderPhantomRow(tbody, contexts, rootPaths, {
+                isBoundary: true,
+                afterPair: lastPair,        // just needs to be truthy to trigger auto-compute
+                prevActNum: lastPair.actNum,
+                pairs: pairs,
+            });
+        }
         this.renderPhantomRow(tbody, contexts, rootPaths);
     }
 
