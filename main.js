@@ -196,7 +196,12 @@ class PlotGridView extends obsidian.ItemView {
         for (const pair of pairs) {
             // Insert a phantom row at each act boundary (but not before the very first row)
             if (prevActNum !== null && pair.actNum !== prevActNum) {
-                this.renderPhantomRow(tbody, contexts, rootPaths, { isBoundary: true });
+                this.renderPhantomRow(tbody, contexts, rootPaths, {
+                    isBoundary: true,
+                    afterPair: pair,           // the row that comes after this boundary
+                    prevActNum: prevActNum,    // the act that just ended
+                    pairs: pairs,
+                });
             }
             prevActNum = pair.actNum;
 
@@ -239,7 +244,9 @@ class PlotGridView extends obsidian.ItemView {
      * Each cell accepts card drops; boundary rows pre-fill Act/Ch from neighbours,
      * bottom row shows explicit inputs.
      */
-    renderPhantomRow(tbody, contexts, rootPaths, { isBoundary = false } = {}) {
+    // AFTER
+    // And in renderPhantomRow signature:
+    renderPhantomRow(tbody, contexts, rootPaths, { isBoundary = false, afterPair = null, prevActNum = null, pairs = [] } = {}) {
         const tr = tbody.createEl("tr");
         tr.style.cssText =
             (isBoundary
@@ -317,19 +324,11 @@ class PlotGridView extends obsidian.ItemView {
                 if (!path) return;
 
                 let actRaw, chRaw;
-                if (isBoundary) {
-                    // No inputs on boundary rows — prompt inline
-                    actRaw = (await this.promptValue("Act for new position (e.g. 2):") ?? "").trim();
-                    if (!actRaw) return;
-                    chRaw = (await this.promptValue("Chapter for new position (e.g. 1):") ?? "").trim();
-                    if (!chRaw) return;
-                } else {
-                    actRaw = actInput.value.trim();
-                    chRaw = chInput.value.trim();
-                    if (!actRaw || !chRaw) {
-                        new obsidian.Notice("Fill in the Act and Chapter fields in the phantom row before dropping.");
-                        return;
-                    }
+                if (isBoundary && afterPair) {
+                    const prevPairs = pairs.filter(p => p.actNum === prevActNum);
+                    const maxCh = Math.max(...prevPairs.map(p => p.chapter));
+                    actRaw = String(prevActNum);
+                    chRaw = String(maxCh + 1);
                 }
 
                 const chapter = Number(chRaw);
