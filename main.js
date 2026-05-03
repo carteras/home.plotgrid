@@ -349,18 +349,16 @@ class PlotGridView extends obsidian.ItemView {
             // Double-click to create a new note in this context column
             td.addEventListener("dblclick", async () => {
                 let actRaw, chRaw;
-                if (isBoundary) {
+                if (isBoundary && afterPair) {
+                    const prevPairs = pairs.filter(p => p.actNum === prevActNum);
+                    const maxCh = Math.max(...prevPairs.map(p => p.chapter));
+                    actRaw = String(prevActNum);
+                    chRaw = String(maxCh + 1);
+                } else if (isBoundary) {
                     actRaw = (await this.promptValue("Act (e.g. 2):") ?? "").trim();
                     if (!actRaw) return;
                     chRaw = (await this.promptValue("Chapter (e.g. 1):") ?? "").trim();
                     if (!chRaw) return;
-                } else {
-                    actRaw = actInput.value.trim();
-                    chRaw = chInput.value.trim();
-                    if (!actRaw || !chRaw) {
-                        new obsidian.Notice("Fill in Act and Chapter first.");
-                        return;
-                    }
                 }
                 const chapter = Number(chRaw);
                 if (!Number.isFinite(chapter)) {
