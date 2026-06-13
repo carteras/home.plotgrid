@@ -2,15 +2,25 @@
   "books": [
     {
       "title": "Wetwear ",
-      "root": "blueprints/cyberpunk/arcology.1.a"
+      "root": "blueprints/cyberpunk/wetwear.book.1.a"
     },
     {
       "title": "Proprietary Love",
-      "root": "blueprints/cyberpunk/arcology.1.b"
+      "root": "blueprints/cyberpunk/wetwear.book.1.b"
     },
     {
       "title": "Ghost Protocols",
-      "root": "blueprints/cyberpunk/arcology.1.c"
+      "root": "blueprints/cyberpunk/wetwear.book.1.c"
+    }
+  ],
+  "collapsedBooks": [
+    0,
+    1
+  ],
+  "sharedPaths": [
+    {
+      "columnName": "021.samantha",
+      "path": "blueprints/cyberpunk/characters/samantha.foster"
     }
   ]
 }
