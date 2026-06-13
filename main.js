@@ -74,34 +74,105 @@ class PlotGridView extends obsidian.ItemView {
             return;
         }
 
-        // Horizontal wrapper for all books side by side
+        // Ensure collapsedBooks is initialised
+        if (!Array.isArray(this.plugin.settings.collapsedBooks)) {
+            this.plugin.settings.collapsedBooks = [];
+        }
+        const collapsed = this.plugin.settings.collapsedBooks; // array of book indices
+
+        // -- Collapsed-books shelf (shows above the active books row) ---------
+        const collapsedShelf = container.createDiv();
+        collapsedShelf.style.cssText =
+            "display:flex;flex-wrap:wrap;gap:8px;margin-bottom:12px;align-items:center;";
+
+        const shelfLabel = collapsedShelf.createEl("span", { text: "Hidden:" });
+        shelfLabel.style.cssText =
+            "font-size:11px;color:var(--text-faint);font-style:italic;margin-right:2px;";
+
+        // Horizontal wrapper for active (expanded) books side by side
         const booksRow = container.createDiv();
         booksRow.style.cssText =
             "display:flex;gap:32px;overflow-x:auto;align-items:flex-start;padding-bottom:16px;";
 
-        for (const book of books) {
+        for (let bookIdx = 0; bookIdx < books.length; bookIdx++) {
+            const book = books[bookIdx];
             const rootPaths = this.parseRoots(book.root);
             if (rootPaths.length === 0) continue;
 
+            const isCollapsed = collapsed.includes(bookIdx);
+            const bookTitle = book.title || "Untitled Book";
+
+            // Toggle helper -- persists state and re-renders
+            const toggleCollapse = async () => {
+                const idx = this.plugin.settings.collapsedBooks.indexOf(bookIdx);
+                if (idx === -1) {
+                    this.plugin.settings.collapsedBooks.push(bookIdx);
+                } else {
+                    this.plugin.settings.collapsedBooks.splice(idx, 1);
+                }
+                await this.plugin.saveSettings();
+                await this.refresh();
+            };
+
+            if (isCollapsed) {
+                // Render a compact pill in the shelf
+                const pill = collapsedShelf.createEl("button");
+                pill.style.cssText =
+                    "display:inline-flex;align-items:center;gap:6px;" +
+                    "padding:3px 10px 3px 8px;border-radius:12px;cursor:pointer;" +
+                    "font-size:12px;font-weight:500;border:1px solid var(--background-modifier-border);" +
+                    "background:var(--background-secondary);color:var(--text-normal);" +
+                    "transition:background 0.15s;";
+                pill.title = "Expand \"" + bookTitle + "\"";
+
+                const arrow = pill.createEl("span", { text: "\u25B8" });
+                arrow.style.cssText = "font-size:10px;color:var(--color-accent);";
+                pill.createEl("span", { text: bookTitle });
+
+                pill.onmouseenter = () => { pill.style.background = "var(--background-modifier-hover)"; };
+                pill.onmouseleave = () => { pill.style.background = "var(--background-secondary)"; };
+                pill.onclick = toggleCollapse;
+                continue; // don't render a full column
+            }
+
+            // -- Expanded book column -----------------------------------------
             const bookCol = booksRow.createDiv();
             bookCol.style.cssText =
                 "flex:0 0 auto;min-width:300px;max-width:1100px;" +
                 "border:1px solid var(--background-modifier-border);border-radius:8px;" +
                 "padding:12px;background:var(--background-primary);";
 
-            // Book title
-            const titleEl = bookCol.createEl("h4", { text: book.title || "Untitled Book" });
-            titleEl.style.cssText =
-                "margin:0 0 4px 0;padding-bottom:6px;" +
-                "border-bottom:2px solid var(--color-accent);color:var(--text-normal);font-size:15px;";
+            // Title row with collapse button
+            const titleRow = bookCol.createDiv();
+            titleRow.style.cssText =
+                "display:flex;align-items:center;gap:8px;margin-bottom:4px;" +
+                "padding-bottom:6px;border-bottom:2px solid var(--color-accent);";
+
+            const titleEl = titleRow.createEl("h4", { text: bookTitle });
+            titleEl.style.cssText = "margin:0;color:var(--text-normal);font-size:15px;flex:1;";
+
+            const collapseBtn = titleRow.createEl("button");
+            collapseBtn.title = "Hide this book";
+            collapseBtn.style.cssText =
+                "padding:2px 7px;border-radius:4px;cursor:pointer;font-size:11px;" +
+                "border:1px solid var(--background-modifier-border);" +
+                "background:transparent;color:var(--text-muted);line-height:1.4;" +
+                "transition:background 0.15s;";
+            collapseBtn.setText("\u25BE Hide");
+            collapseBtn.onmouseenter = () => { collapseBtn.style.background = "var(--background-modifier-hover)"; };
+            collapseBtn.onmouseleave = () => { collapseBtn.style.background = "transparent"; };
+            collapseBtn.onclick = toggleCollapse;
 
             // Scanning info
             const pathInfo = bookCol.createEl("p", { text: "Scanning: " + rootPaths.join(", ") });
             pathInfo.style.cssText = "font-size:11px;color:var(--text-muted);margin-bottom:8px;";
 
             const rows = await this.loadRows(rootPaths);
+            const sharedRows = await this.loadSharedRows(
+                this.plugin.settings.sharedPaths || [], bookTitle, rootPaths, book.aliases || []);
+            const allRows = [...rows, ...sharedRows];
 
-            if (rows.length === 0) {
+            if (allRows.length === 0) {
                 const s = this._lastSkipped || {};
                 bookCol.createEl("p", {
                     text: `No notes found. Skipped: ${s.noContext || 0} outside path, ${s.noFm || 0} no frontmatter, ${s.noChapter || 0} no chapter, ${s.noAct || 0} no act.`,
@@ -111,7 +182,7 @@ class PlotGridView extends obsidian.ItemView {
 
             // Build sorted unique act+chapter pairs
             const pairMap = new Map();
-            for (const r of rows) {
+            for (const r of allRows) {
                 const key = `${r.actNum}|${r.chapter}`;
                 if (!pairMap.has(key)) {
                     pairMap.set(key, { actNum: r.actNum, actRaw: r.actRaw, chapter: r.chapter });
@@ -121,28 +192,45 @@ class PlotGridView extends obsidian.ItemView {
                 a.actNum !== b.actNum ? a.actNum - b.actNum : a.chapter - b.chapter
             );
 
-            // Unique contexts (columns / threads)
-            const contexts = [...new Set(rows.map((r) => r.context))].sort();
+            // Unique contexts (columns / threads) — sorted so shared cols interleave naturally.
+            // Always include configured shared column names even if no notes matched yet,
+            // so the column is visible as a reminder and accepts future notes.
+            const configuredSharedColNames = (this.plugin.settings.sharedPaths || [])
+                .map(sp => (sp.columnName || "").trim())
+                .filter(Boolean);
+            const contexts = [...new Set([
+                ...allRows.map((r) => r.context),
+                ...configuredSharedColNames,
+            ])].sort();
+
+            // Which contexts come from shared paths (read-only in the grid)
+            const sharedContextNames = new Set([
+                ...sharedRows.map(r => r.context),
+                ...configuredSharedColNames,
+            ]);
 
             // Grid lookup
             const grid = new Map();
-            for (const r of rows) {
+            for (const r of allRows) {
                 const key = `${r.actNum}|${r.chapter}|${r.context}`;
                 if (!grid.has(key)) grid.set(key, []);
                 grid.get(key).push(r);
             }
 
-            this.renderGrid(bookCol, pairs, contexts, grid, rootPaths);
+            this.renderGrid(bookCol, pairs, contexts, grid, rootPaths, sharedContextNames);
         }
+
+        // Hide the shelf label row if nothing is collapsed
+        if (collapsed.length === 0) collapsedShelf.style.display = "none";
     }
 
     parseRoots(rootStr) {
         const setting = (rootStr || "").trim();
         if (!setting) return [];
-        return setting.split("\n").map(r => r.trim().replace(/\/+$/, "")).filter(r => r.length > 0);
+        return setting.split("\n").map(r => r.trim().replace(/\\/g, "/").replace(/\/+$/, "")).filter(r => r.length > 0);
     }
 
-    renderGrid(container, pairs, contexts, grid, rootPaths) {
+    renderGrid(container, pairs, contexts, grid, rootPaths, sharedContextNames = new Set()) {
         // New cell drop zone
         const newZone = container.createDiv();
         newZone.style.cssText =
@@ -185,9 +273,16 @@ class PlotGridView extends obsidian.ItemView {
         const headerRow = thead.createEl("tr");
         for (const col of ["Act", "Chapter", ...contexts]) {
             const th = headerRow.createEl("th", { text: col });
+            const isSharedCol = sharedContextNames.has(col);
             th.style.cssText =
                 "padding:8px 12px;text-align:left;border-bottom:2px solid var(--background-modifier-border);" +
-                "white-space:nowrap;font-weight:600;color:var(--text-muted);";
+                "white-space:nowrap;font-weight:600;" +
+                (isSharedCol
+                    ? "color:var(--color-accent);font-style:italic;"
+                    : "color:var(--text-muted);");
+            if (isSharedCol) {
+                th.title = "Shared data path (read-only in this grid)";
+            }
         }
 
         // Body
@@ -198,9 +293,10 @@ class PlotGridView extends obsidian.ItemView {
             if (prevActNum !== null && pair.actNum !== prevActNum) {
                 this.renderPhantomRow(tbody, contexts, rootPaths, {
                     isBoundary: true,
-                    afterPair: pair,           // the row that comes after this boundary
-                    prevActNum: prevActNum,    // the act that just ended
+                    afterPair: pair,
+                    prevActNum: prevActNum,
                     pairs: pairs,
+                    sharedContextNames,
                 });
             }
             prevActNum = pair.actNum;
@@ -220,8 +316,14 @@ class PlotGridView extends obsidian.ItemView {
                 const key = `${pair.actNum}|${pair.chapter}|${ctx}`;
                 const files = grid.get(key) || [];
                 const td = tr.createEl("td");
-                td.style.cssText = "padding:6px 8px;vertical-align:top;min-width:140px;cursor:pointer;";
-                this.wireDropTarget(td, pair.actNum, pair.actRaw, pair.chapter, ctx, rootPaths);
+                const isShared = sharedContextNames.has(ctx);
+                td.style.cssText =
+                    "padding:6px 8px;vertical-align:top;min-width:140px;" +
+                    (isShared ? "cursor:default;background:var(--background-secondary-alt,var(--background-secondary));opacity:0.92;" : "cursor:pointer;");
+
+                if (!isShared) {
+                    this.wireDropTarget(td, pair.actNum, pair.actRaw, pair.chapter, ctx, rootPaths);
+                }
 
                 if (files.length === 0) {
                     const em = td.createEl("span", { text: "—" });
@@ -239,12 +341,13 @@ class PlotGridView extends obsidian.ItemView {
         if (lastPair) {
             this.renderPhantomRow(tbody, contexts, rootPaths, {
                 isBoundary: true,
-                afterPair: lastPair,        // just needs to be truthy to trigger auto-compute
+                afterPair: lastPair,
                 prevActNum: lastPair.actNum,
                 pairs: pairs,
+                sharedContextNames,
             });
         }
-        this.renderPhantomRow(tbody, contexts, rootPaths);
+        this.renderPhantomRow(tbody, contexts, rootPaths, { sharedContextNames });
     }
 
     /**
@@ -252,10 +355,9 @@ class PlotGridView extends obsidian.ItemView {
      * Used both at act boundaries (isBoundary: true) and at the bottom of the table.
      * Each cell accepts card drops; boundary rows pre-fill Act/Ch from neighbours,
      * bottom row shows explicit inputs.
+     * Shared context columns are rendered as inert cells (no drop/create wiring).
      */
-    // AFTER
-    // And in renderPhantomRow signature:
-    renderPhantomRow(tbody, contexts, rootPaths, { isBoundary = false, afterPair = null, prevActNum = null, pairs = [] } = {}) {
+    renderPhantomRow(tbody, contexts, rootPaths, { isBoundary = false, afterPair = null, prevActNum = null, pairs = [], sharedContextNames = new Set() } = {}) {
         const tr = tbody.createEl("tr");
         tr.style.cssText =
             (isBoundary
@@ -301,9 +403,18 @@ class PlotGridView extends obsidian.ItemView {
         // One drop-target cell per context column
         for (const ctx of contexts) {
             const td = tr.createEl("td");
+            const isShared = sharedContextNames.has(ctx);
             td.style.cssText =
                 "padding:4px 8px;vertical-align:middle;min-width:140px;" +
-                "border-left:1px dashed var(--background-modifier-border);";
+                "border-left:1px dashed var(--background-modifier-border);" +
+                (isShared ? "background:var(--background-secondary-alt,var(--background-secondary));opacity:0.7;" : "");
+
+            if (isShared) {
+                // Shared columns are read-only — no drop, no create
+                const hint = td.createEl("span", { text: "—" });
+                hint.style.cssText = "font-size:11px;color:var(--text-faint);pointer-events:none;";
+                continue;
+            }
 
             const hint = td.createEl("span", { text: "drop here" });
             hint.style.cssText =
@@ -632,9 +743,110 @@ class PlotGridView extends obsidian.ItemView {
                 actRaw: String(act),
                 color: normalizeColor(fm.color ?? fm.Color),
                 summary: fm.summary ?? fm.Summary ?? null,
+                shared: false,
             });
         }
         this._lastSkipped = skipped;
+        return rows;
+    }
+
+    async loadSharedRows(sharedPaths, bookTitle, bookRootPaths = [], bookAliases = []) {
+        // Build a set of all strings that count as "this book" for matching.
+        const matchTokens = new Set();
+
+        const addToken = (s) => {
+            if (!s) return;
+            const t = String(s).trim().toLowerCase();
+            if (t) matchTokens.add(t);
+        };
+
+        // Working title
+        addToken(bookTitle);
+
+        // Explicit aliases set in settings — these are the highest-priority exact matches
+        for (const alias of bookAliases) addToken(alias);
+
+        // Root path segments as a fallback
+        for (const rp of bookRootPaths) {
+            addToken(rp);
+            for (const seg of rp.split("/")) addToken(seg);
+        }
+
+        // Normalise a raw frontmatter value to plain strings for comparison.
+        // Handles: plain string, Obsidian resolved link object { path, ... },
+        // wiki-link text "[[Foo]]", and arrays of any of the above.
+        const normalise = (v) => {
+            if (!v) return [];
+            const items = Array.isArray(v) ? v : [v];
+            const out = [];
+            for (const item of items) {
+                if (item && typeof item === "object") {
+                    // Obsidian stores wikilinks as { path: "...", displayText: "..." }
+                    const p = item.path ?? item.link ?? "";
+                    if (p) {
+                        out.push(p.toLowerCase().trim());
+                        out.push(p.split("/").pop().toLowerCase().trim());
+                    }
+                    // Also try display text
+                    const d = item.displayText ?? "";
+                    if (d) out.push(d.toLowerCase().trim());
+                } else {
+                    const s = String(item).trim();
+                    const stripped = s.replace(/^\[\[(.+)\]\]$/, "$1").trim();
+                    out.push(stripped.toLowerCase());
+                    out.push(stripped.split("/").pop().toLowerCase());
+                }
+            }
+            return out.filter(Boolean);
+        };
+
+        const bookMatches = (fm) => {
+            // Check both 'book' and 'series' fields — authors may use either
+            const candidates = [
+                ...(normalise(fm.book ?? fm.Book)),
+                ...(normalise(fm.series ?? fm.Series)),
+            ];
+            return candidates.some(c => matchTokens.has(c));
+        };
+
+        const rows = [];
+        for (const sp of sharedPaths) {
+            const root = (sp.path || "").trim().replace(/\\/g, "/").replace(/\/+$/, "");
+            const columnName = (sp.columnName || "").trim();
+            if (!root || !columnName) continue;
+
+            for (const file of this.app.vault.getMarkdownFiles()) {
+                if (!file.path.startsWith(root + "/")) continue;
+
+                const fm = this.app.metadataCache.getFileCache(file)?.frontmatter;
+                if (!fm) continue;
+
+                if (!bookMatches(fm)) continue;
+
+                // Must have act + chapter
+                let chapter = Number(fm.chapter ?? fm.Chapter);
+                if (!Number.isFinite(chapter)) {
+                    const m = file.name.match(/^(\d+)/);
+                    chapter = m ? Number(m[1]) : NaN;
+                }
+                if (!Number.isFinite(chapter)) continue;
+
+                const act = fm.act ?? fm.Act;
+                if (act === undefined || act === null) continue;
+
+                rows.push({
+                    file,
+                    context: columnName,
+                    chapter,
+                    act,
+                    actNum: parseActNum(act),
+                    actRaw: String(act),
+                    color: normalizeColor(fm.color ?? fm.Color),
+                    summary: fm.summary ?? fm.Summary ?? null,
+                    shared: true,
+                });
+            }
+        }
         return rows;
     }
 }
@@ -643,6 +855,8 @@ class PlotGridView extends obsidian.ItemView {
 
 const DEFAULT_SETTINGS = {
     books: [],
+    collapsedBooks: [],   // array of book indices that are collapsed
+    sharedPaths: [],      // array of { columnName, path } shared across all books
 };
 
 class PlotGridSettingTab extends obsidian.PluginSettingTab {
@@ -680,10 +894,91 @@ class PlotGridSettingTab extends obsidian.PluginSettingTab {
             this.display();
         };
 
+        // ── Shared Data Paths ─────────────────────────────────────────────────
+        containerEl.createEl("hr", { attr: { style: "margin:24px 0 16px;border:none;border-top:1px solid var(--background-modifier-border);" } });
+        containerEl.createEl("h3", { text: "Shared Data Paths", attr: { style: "margin:0 0 6px;" } });
+        containerEl.createEl("p", {
+            text: "Paths scanned across all books for worldbuilding, characters, etc. " +
+                "Each entry has a column name (used as the grid header) and a vault folder path. " +
+                "Notes in shared paths must have a 'book' frontmatter field matching the book's working title, " +
+                "plus the usual 'act' and 'chapter' fields.",
+            attr: { style: "color:var(--text-muted);font-size:13px;margin-bottom:14px;" },
+        });
+
+        if (!Array.isArray(this.plugin.settings.sharedPaths)) {
+            this.plugin.settings.sharedPaths = [];
+        }
+        const sharedPaths = this.plugin.settings.sharedPaths;
+
+        for (let i = 0; i < sharedPaths.length; i++) {
+            this.renderSharedPathEntry(containerEl, sharedPaths, i);
+        }
+
+        const addSharedBtn = containerEl.createEl("button", { text: "+ Add Shared Path" });
+        addSharedBtn.style.cssText =
+            "margin-top:8px;padding:6px 18px;border-radius:6px;cursor:pointer;font-size:13px;font-weight:500;";
+        addSharedBtn.onclick = async () => {
+            sharedPaths.push({ columnName: "", path: "" });
+            await this.plugin.saveSettings();
+            this.display();
+        };
+
         containerEl.createEl("p", {
             text: "After changing settings, click ↻ Refresh in the PlotGrid view to reload.",
             attr: { style: "color:var(--text-muted);font-size:12px;margin-top:16px;" },
         });
+    }
+
+    renderSharedPathEntry(containerEl, sharedPaths, index) {
+        const sp = sharedPaths[index];
+
+        const wrapper = containerEl.createDiv();
+        wrapper.style.cssText =
+            "border:1px solid var(--color-accent);border-radius:8px;border-opacity:0.4;" +
+            "padding:12px 16px;margin-bottom:10px;background:var(--background-secondary);";
+
+        const titleRow = wrapper.createDiv();
+        titleRow.style.cssText = "display:flex;align-items:center;gap:8px;margin-bottom:8px;";
+
+        const label = titleRow.createEl("span", { text: `Shared ${index + 1}` });
+        label.style.cssText = "font-weight:600;font-size:13px;color:var(--color-accent);min-width:65px;";
+
+        const deleteBtn = titleRow.createEl("button", { text: "✕ Remove" });
+        deleteBtn.style.cssText =
+            "margin-left:auto;padding:2px 10px;border-radius:4px;cursor:pointer;" +
+            "font-size:11px;color:var(--text-error);";
+        deleteBtn.onclick = async () => {
+            sharedPaths.splice(index, 1);
+            await this.plugin.saveSettings();
+            this.display();
+        };
+
+        new obsidian.Setting(wrapper)
+            .setName("Column name")
+            .setDesc("Header shown in the grid, e.g. '005.characters' or '020.world'.")
+            .addText((text) => {
+                text
+                    .setPlaceholder("e.g. 005.characters")
+                    .setValue(sp.columnName)
+                    .onChange(async (value) => {
+                        sp.columnName = value;
+                        await this.plugin.saveSettings();
+                    });
+            });
+
+        new obsidian.Setting(wrapper)
+            .setName("Vault path")
+            .setDesc("Folder path to scan for this shared data, e.g. 'series-shared/characters'.")
+            .addText((text) => {
+                text.inputEl.style.cssText = "width:100%;font-family:monospace;font-size:13px;";
+                text
+                    .setPlaceholder("e.g. series-shared/characters")
+                    .setValue(sp.path)
+                    .onChange(async (value) => {
+                        sp.path = value;
+                        await this.plugin.saveSettings();
+                    });
+            });
     }
 
     renderBookEntry(containerEl, books, index) {
@@ -759,6 +1054,21 @@ class PlotGridSettingTab extends obsidian.PluginSettingTab {
                         await this.plugin.saveSettings();
                     });
             });
+
+        // Aliases
+        new obsidian.Setting(wrapper)
+            .setName("Shared path aliases")
+            .setDesc("Extra identifiers used in the 'book' frontmatter field of shared notes (e.g. a wiki-link filename like 'wetwear.book.1.c'). One per line.")
+            .addTextArea((text) => {
+                text.inputEl.style.cssText = "width:100%;min-height:50px;font-family:monospace;font-size:13px;";
+                text
+                    .setPlaceholder("e.g. wetwear.book.1.c")
+                    .setValue((book.aliases || []).join("\n"))
+                    .onChange(async (value) => {
+                        book.aliases = value.split("\n").map(s => s.trim()).filter(Boolean);
+                        await this.plugin.saveSettings();
+                    });
+            });
     }
 }
 
@@ -781,6 +1091,12 @@ class PlotGridPlugin extends obsidian.Plugin {
     async loadSettings() {
         const loaded = await this.loadData();
         this.settings = Object.assign({}, DEFAULT_SETTINGS, loaded);
+        if (!Array.isArray(this.settings.collapsedBooks)) {
+            this.settings.collapsedBooks = [];
+        }
+        if (!Array.isArray(this.settings.sharedPaths)) {
+            this.settings.sharedPaths = [];
+        }
 
         // Migrate old single-root format to multi-book format
         if (loaded && loaded.blueprintRoot && (!this.settings.books || this.settings.books.length === 0)) {
