@@ -92,7 +92,7 @@ class PlotGridView extends obsidian.ItemView {
         // Horizontal wrapper for active (expanded) books side by side
         const booksRow = container.createDiv();
         booksRow.style.cssText =
-            "display:flex;gap:32px;overflow-x:auto;align-items:flex-start;padding-bottom:16px;";
+            "display:flex;gap:32px;overflow-x:auto;align-items:flex-start;padding-bottom:16px;width:100%;box-sizing:border-box;";
 
         for (let bookIdx = 0; bookIdx < books.length; bookIdx++) {
             const book = books[bookIdx];
@@ -138,9 +138,9 @@ class PlotGridView extends obsidian.ItemView {
             // -- Expanded book column -----------------------------------------
             const bookCol = booksRow.createDiv();
             bookCol.style.cssText =
-                "flex:0 0 auto;min-width:300px;max-width:1100px;" +
+                "flex:1 1 300px;min-width:300px;" +
                 "border:1px solid var(--background-modifier-border);border-radius:8px;" +
-                "padding:12px;background:var(--background-primary);";
+                "padding:12px;background:var(--background-primary);box-sizing:border-box;";
 
             // Title row with collapse button
             const titleRow = bookCol.createDiv();
@@ -203,11 +203,13 @@ class PlotGridView extends obsidian.ItemView {
                 ...configuredSharedColNames,
             ])].sort();
 
-            // Which contexts come from shared paths (read-only in the grid)
-            const sharedContextNames = new Set([
-                ...sharedRows.map(r => r.context),
-                ...configuredSharedColNames,
-            ]);
+            // Map of shared column name -> its vault root path (for drop/create routing)
+            const sharedRootsByColName = new Map();
+            for (const sp of (this.plugin.settings.sharedPaths || [])) {
+                const colName = (sp.columnName || "").trim();
+                const root = (sp.path || "").trim().replace(/\\/g, "/").replace(/\/+$/, "");
+                if (colName && root) sharedRootsByColName.set(colName, root);
+            }
 
             // Grid lookup
             const grid = new Map();
@@ -217,7 +219,7 @@ class PlotGridView extends obsidian.ItemView {
                 grid.get(key).push(r);
             }
 
-            this.renderGrid(bookCol, pairs, contexts, grid, rootPaths, sharedContextNames);
+            this.renderGrid(bookCol, pairs, contexts, grid, rootPaths, sharedRootsByColName);
         }
 
         // Hide the shelf label row if nothing is collapsed
@@ -230,7 +232,7 @@ class PlotGridView extends obsidian.ItemView {
         return setting.split("\n").map(r => r.trim().replace(/\\/g, "/").replace(/\/+$/, "")).filter(r => r.length > 0);
     }
 
-    renderGrid(container, pairs, contexts, grid, rootPaths, sharedContextNames = new Set()) {
+    renderGrid(container, pairs, contexts, grid, rootPaths, sharedRootsByColName = new Map()) {
         // New cell drop zone
         const newZone = container.createDiv();
         newZone.style.cssText =
@@ -273,16 +275,9 @@ class PlotGridView extends obsidian.ItemView {
         const headerRow = thead.createEl("tr");
         for (const col of ["Act", "Chapter", ...contexts]) {
             const th = headerRow.createEl("th", { text: col });
-            const isSharedCol = sharedContextNames.has(col);
             th.style.cssText =
                 "padding:8px 12px;text-align:left;border-bottom:2px solid var(--background-modifier-border);" +
-                "white-space:nowrap;font-weight:600;" +
-                (isSharedCol
-                    ? "color:var(--color-accent);font-style:italic;"
-                    : "color:var(--text-muted);");
-            if (isSharedCol) {
-                th.title = "Shared data path (read-only in this grid)";
-            }
+                "white-space:nowrap;font-weight:600;color:var(--text-muted);";
         }
 
         // Body
@@ -296,7 +291,7 @@ class PlotGridView extends obsidian.ItemView {
                     afterPair: pair,
                     prevActNum: prevActNum,
                     pairs: pairs,
-                    sharedContextNames,
+                    sharedRootsByColName,
                 });
             }
             prevActNum = pair.actNum;
@@ -316,14 +311,12 @@ class PlotGridView extends obsidian.ItemView {
                 const key = `${pair.actNum}|${pair.chapter}|${ctx}`;
                 const files = grid.get(key) || [];
                 const td = tr.createEl("td");
-                const isShared = sharedContextNames.has(ctx);
-                td.style.cssText =
-                    "padding:6px 8px;vertical-align:top;min-width:140px;" +
-                    (isShared ? "cursor:default;background:var(--background-secondary-alt,var(--background-secondary));opacity:0.92;" : "cursor:pointer;");
+                const colRoots = sharedRootsByColName.has(ctx)
+                    ? [sharedRootsByColName.get(ctx)]
+                    : rootPaths;
+                td.style.cssText = "padding:6px 8px;vertical-align:top;min-width:140px;cursor:pointer;";
 
-                if (!isShared) {
-                    this.wireDropTarget(td, pair.actNum, pair.actRaw, pair.chapter, ctx, rootPaths);
-                }
+                this.wireDropTarget(td, pair.actNum, pair.actRaw, pair.chapter, ctx, colRoots);
 
                 if (files.length === 0) {
                     const em = td.createEl("span", { text: "—" });
@@ -344,10 +337,10 @@ class PlotGridView extends obsidian.ItemView {
                 afterPair: lastPair,
                 prevActNum: lastPair.actNum,
                 pairs: pairs,
-                sharedContextNames,
+                sharedRootsByColName,
             });
         }
-        this.renderPhantomRow(tbody, contexts, rootPaths, { sharedContextNames });
+        this.renderPhantomRow(tbody, contexts, rootPaths, { sharedRootsByColName });
     }
 
     /**
@@ -357,7 +350,7 @@ class PlotGridView extends obsidian.ItemView {
      * bottom row shows explicit inputs.
      * Shared context columns are rendered as inert cells (no drop/create wiring).
      */
-    renderPhantomRow(tbody, contexts, rootPaths, { isBoundary = false, afterPair = null, prevActNum = null, pairs = [], sharedContextNames = new Set() } = {}) {
+    renderPhantomRow(tbody, contexts, rootPaths, { isBoundary = false, afterPair = null, prevActNum = null, pairs = [], sharedRootsByColName = new Map() } = {}) {
         const tr = tbody.createEl("tr");
         tr.style.cssText =
             (isBoundary
@@ -403,18 +396,12 @@ class PlotGridView extends obsidian.ItemView {
         // One drop-target cell per context column
         for (const ctx of contexts) {
             const td = tr.createEl("td");
-            const isShared = sharedContextNames.has(ctx);
+            const colRoots = sharedRootsByColName.has(ctx)
+                ? [sharedRootsByColName.get(ctx)]
+                : rootPaths;
             td.style.cssText =
                 "padding:4px 8px;vertical-align:middle;min-width:140px;" +
-                "border-left:1px dashed var(--background-modifier-border);" +
-                (isShared ? "background:var(--background-secondary-alt,var(--background-secondary));opacity:0.7;" : "");
-
-            if (isShared) {
-                // Shared columns are read-only — no drop, no create
-                const hint = td.createEl("span", { text: "—" });
-                hint.style.cssText = "font-size:11px;color:var(--text-faint);pointer-events:none;";
-                continue;
-            }
+                "border-left:1px dashed var(--background-modifier-border);";
 
             const hint = td.createEl("span", { text: "drop here" });
             hint.style.cssText =
@@ -486,7 +473,7 @@ class PlotGridView extends obsidian.ItemView {
                     return;
                 }
                 const actNum = parseActNum(actRaw);
-                await this.createNoteInCell(actNum, actRaw, chapter, ctx, rootPaths);
+                await this.createNoteInCell(actNum, actRaw, chapter, ctx, colRoots);
             });
         }
     }
